@@ -1,6 +1,7 @@
 name: sqlite
-description: sqlite backend
-version: 0.1.0-beta.1
+display_name: SQLite
+description: Integration providing storage capabilities to SQLite databases.
+version: 1.0.0
 connectors:
 - type: storage
   executable: sqliteStorage
