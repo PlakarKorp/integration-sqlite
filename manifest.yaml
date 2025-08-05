@@ -1,7 +1,7 @@
 name: sqlite
 display_name: SQLite
 description: Integration providing storage capabilities to SQLite databases.
-version: 1.0.0
+version: v1.0.0
 connectors:
 - type: storage
   executable: sqliteStorage
