@@ -1,19 +1,15 @@
 name: sqlite
 description: sqlite backend
-version: 0.1.0-beta.1
+homepage: https://github.com/PlakarKorp/integration-sqlite
+license: ISC
+version: v0.1.0.beta.4
 connectors:
 - type: importer
   executable: sqliteImporter
-  homepage: https://github.com/PlakarKorp/integration-sqlite
-  license: ISC
   protocols: [sqlite]
 - type: exporter
   executable: sqliteExporter
-  homepage: https://github.com/PlakarKorp/integration-sqlite
-  license: ISC
   protocols: [sqlite]
 - type: storage
   executable: sqliteStorage
-  homepage: https://github.com/PlakarKorp/integration-sqlite
-  license: ISC
   protocols: [sqlite]
