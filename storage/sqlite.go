@@ -26,14 +26,18 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/PlakarKorp/kloset/connectors/storage"
 	"github.com/PlakarKorp/kloset/location"
 	"github.com/PlakarKorp/kloset/objects"
 	"github.com/PlakarKorp/kloset/repository"
-	"github.com/PlakarKorp/kloset/storage"
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
+
+func init() {
+	storage.Register("sqlite", 0, NewStore)
+}
 
 type Store struct {
 	backend string
@@ -163,9 +167,10 @@ func (s *Store) Open(ctx context.Context) ([]byte, error) {
 	return buffer, nil
 }
 
-func (s *Store) Close(ctx context.Context) error {
-	return s.conn.Close()
-}
+func (s *Store) Origin() string        { return "localhost" }
+func (s *Store) Root() string          { return s.location }
+func (s *Store) Type() string          { return "sqlite" }
+func (s *Store) Flags() location.Flags { return 0 }
 
 func (s *Store) Mode(context context.Context) (storage.Mode, error) {
 	return storage.ModeRead | storage.ModeWrite, nil
@@ -175,8 +180,77 @@ func (s *Store) Size(context context.Context) (int64, error) {
 	return -1, nil
 }
 
+func (s *Store) Ping(ctx context.Context) error {
+	return nil
+}
+
+func (s *Store) Close(ctx context.Context) error {
+	return s.conn.Close()
+}
+
+func (s *Store) List(ctx context.Context, res storage.StorageResource) ([]objects.MAC, error) {
+	switch res {
+	case storage.StorageResourcePackfile:
+		return s.getPackfiles(ctx)
+	case storage.StorageResourceState:
+		return s.getStates(ctx)
+	case storage.StorageResourceLock:
+		return s.getLocks(ctx)
+	default:
+		return nil, errors.ErrUnsupported
+	}
+}
+
+func (s *Store) Put(ctx context.Context, res storage.StorageResource, mac objects.MAC, rd io.Reader) (int64, error) {
+	switch res {
+	case storage.StorageResourcePackfile:
+		return s.putPackfile(ctx, mac, rd)
+	case storage.StorageResourceState:
+		return s.putState(ctx, mac, rd)
+	case storage.StorageResourceLock:
+		return s.putLock(ctx, mac, rd)
+	default:
+		return -1, errors.ErrUnsupported
+	}
+}
+
+func (s *Store) Get(ctx context.Context, res storage.StorageResource, mac objects.MAC, rg *storage.Range) (io.ReadCloser, error) {
+	switch res {
+	case storage.StorageResourcePackfile:
+		if rg != nil {
+			return s.getPackfileBlob(ctx, mac, rg.Offset, rg.Length)
+		}
+		return s.getPackfile(ctx, mac)
+	case storage.StorageResourceState:
+		if rg != nil {
+			return nil, errors.ErrUnsupported
+		}
+		return s.getState(ctx, mac)
+	case storage.StorageResourceLock:
+		if rg != nil {
+			return nil, errors.ErrUnsupported
+		}
+		return s.getLock(ctx, mac)
+	default:
+		return nil, errors.ErrUnsupported
+	}
+}
+
+func (s *Store) Delete(ctx context.Context, res storage.StorageResource, mac objects.MAC) error {
+	switch res {
+	case storage.StorageResourcePackfile:
+		return s.deletePackfile(ctx, mac)
+	case storage.StorageResourceState:
+		return s.deleteState(ctx, mac)
+	case storage.StorageResourceLock:
+		return s.deleteLock(ctx, mac)
+	default:
+		return errors.ErrUnsupported
+	}
+}
+
 // states
-func (s *Store) GetStates(context context.Context) ([]objects.MAC, error) {
+func (s *Store) getStates(context context.Context) ([]objects.MAC, error) {
 	rows, err := s.conn.Query("SELECT mac FROM states")
 	if err != nil {
 		return nil, err
@@ -197,7 +271,7 @@ func (s *Store) GetStates(context context.Context) ([]objects.MAC, error) {
 	return macs, nil
 }
 
-func (s *Store) PutState(context context.Context, mac objects.MAC, rd io.Reader) (int64, error) {
+func (s *Store) putState(context context.Context, mac objects.MAC, rd io.Reader) (int64, error) {
 	data, err := io.ReadAll(rd)
 	if err != nil {
 		return 0, err
@@ -225,7 +299,7 @@ func (s *Store) PutState(context context.Context, mac objects.MAC, rd io.Reader)
 	return int64(len(data)), nil
 }
 
-func (s *Store) GetState(context context.Context, mac objects.MAC) (io.ReadCloser, error) {
+func (s *Store) getState(context context.Context, mac objects.MAC) (io.ReadCloser, error) {
 	var data []byte
 	err := s.conn.QueryRow(`SELECT data FROM states WHERE mac=?`, mac[:]).Scan(&data)
 	if err != nil {
@@ -234,7 +308,7 @@ func (s *Store) GetState(context context.Context, mac objects.MAC) (io.ReadClose
 	return io.NopCloser(bytes.NewBuffer(data)), nil
 }
 
-func (s *Store) DeleteState(context context.Context, mac objects.MAC) error {
+func (s *Store) deleteState(context context.Context, mac objects.MAC) error {
 	statement, err := s.conn.Prepare(`DELETE FROM states WHERE mac=?`)
 	if err != nil {
 		return err
@@ -252,7 +326,7 @@ func (s *Store) DeleteState(context context.Context, mac objects.MAC) error {
 }
 
 // packfiles
-func (s *Store) GetPackfiles(context context.Context) ([]objects.MAC, error) {
+func (s *Store) getPackfiles(context context.Context) ([]objects.MAC, error) {
 	rows, err := s.conn.Query("SELECT mac FROM packfiles")
 	if err != nil {
 		return nil, err
@@ -273,7 +347,7 @@ func (s *Store) GetPackfiles(context context.Context) ([]objects.MAC, error) {
 	return macs, nil
 }
 
-func (s *Store) PutPackfile(context context.Context, mac objects.MAC, rd io.Reader) (int64, error) {
+func (s *Store) putPackfile(context context.Context, mac objects.MAC, rd io.Reader) (int64, error) {
 	data, err := io.ReadAll(rd)
 	if err != nil {
 		return 0, err
@@ -301,7 +375,7 @@ func (s *Store) PutPackfile(context context.Context, mac objects.MAC, rd io.Read
 	return int64(len(data)), nil
 }
 
-func (s *Store) GetPackfile(context context.Context, mac objects.MAC) (io.ReadCloser, error) {
+func (s *Store) getPackfile(context context.Context, mac objects.MAC) (io.ReadCloser, error) {
 	var data []byte
 	err := s.conn.QueryRow(`SELECT data FROM packfiles WHERE mac=?`, mac[:]).Scan(&data)
 	if err != nil {
@@ -310,7 +384,7 @@ func (s *Store) GetPackfile(context context.Context, mac objects.MAC) (io.ReadCl
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-func (s *Store) GetPackfileBlob(context context.Context, mac objects.MAC, offset uint64, length uint32) (io.ReadCloser, error) {
+func (s *Store) getPackfileBlob(context context.Context, mac objects.MAC, offset uint64, length uint32) (io.ReadCloser, error) {
 	var data []byte
 	err := s.conn.QueryRow(`SELECT substr(data, ?, ?) FROM packfiles WHERE mac=?`, offset+1, length, mac[:]).Scan(&data)
 	if err != nil {
@@ -322,7 +396,7 @@ func (s *Store) GetPackfileBlob(context context.Context, mac objects.MAC, offset
 	return io.NopCloser(bytes.NewBuffer(data)), nil
 }
 
-func (s *Store) DeletePackfile(context context.Context, mac objects.MAC) error {
+func (s *Store) deletePackfile(context context.Context, mac objects.MAC) error {
 	statement, err := s.conn.Prepare(`DELETE FROM packfiles WHERE mac=?`)
 	if err != nil {
 		return err
@@ -339,7 +413,7 @@ func (s *Store) DeletePackfile(context context.Context, mac objects.MAC) error {
 	return nil
 }
 
-func (s *Store) GetLocks(context context.Context) ([]objects.MAC, error) {
+func (s *Store) getLocks(context context.Context) ([]objects.MAC, error) {
 	rows, err := s.conn.Query("SELECT mac FROM locks")
 	if err != nil {
 		return nil, err
@@ -369,7 +443,7 @@ func (s *Store) GetLocks(context context.Context) ([]objects.MAC, error) {
 	return ret, nil
 }
 
-func (s *Store) PutLock(context context.Context, lockID objects.MAC, rd io.Reader) (int64, error) {
+func (s *Store) putLock(context context.Context, lockID objects.MAC, rd io.Reader) (int64, error) {
 	data, err := io.ReadAll(rd)
 	if err != nil {
 		return 0, err
@@ -397,7 +471,7 @@ func (s *Store) PutLock(context context.Context, lockID objects.MAC, rd io.Reade
 	return int64(len(data)), nil
 }
 
-func (s *Store) GetLock(context context.Context, lockID objects.MAC) (io.ReadCloser, error) {
+func (s *Store) getLock(context context.Context, lockID objects.MAC) (io.ReadCloser, error) {
 	var data []byte
 	err := s.conn.QueryRow(`SELECT data FROM locks WHERE mac=?`, hex.EncodeToString(lockID[:])).Scan(&data)
 	if err != nil {
@@ -406,7 +480,7 @@ func (s *Store) GetLock(context context.Context, lockID objects.MAC) (io.ReadClo
 	return io.NopCloser(bytes.NewBuffer(data)), nil
 }
 
-func (s *Store) DeleteLock(context context.Context, lockID objects.MAC) error {
+func (s *Store) deleteLock(context context.Context, lockID objects.MAC) error {
 	statement, err := s.conn.Prepare(`DELETE FROM locks WHERE mac=?`)
 	if err != nil {
 		return err
